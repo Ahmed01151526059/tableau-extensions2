@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Simple Tableau Dashboard Extension</title>
+  <title>Simple Dashboard Extension</title>
 
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- Tableau Extensions API -->
-  <script src="https://extensions.tableauusercontent.com/resources/tableau.extensions.1.latest.min.js"></script>
+  <!-- ✅ Tableau Extensions API (official, stable URL) -->
+  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
 
   <!-- Chart.js for charts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -16,7 +16,12 @@
   <div id="app">
     <header>
       <h1>Simple Dashboard Extension</h1>
-      <span id="status-text">Initializing extension...</span>
+      <div>
+        <span id="user-name" style="margin-right: 12px; font-size: 12px; color: #ccc;">
+          User: (not initialized)
+        </span>
+        <span id="status-text">Initializing extension...</span>
+      </div>
     </header>
 
     <main>
