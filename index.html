@@ -2,52 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Simple Dashboard Extension</title>
+  <title>Simple Tableau REST Dashboard Extension</title>
 
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- Tableau Extensions API (official URL) -->
-  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
-
   <!-- Chart.js for charts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- PapaParse for CSV parsing from Tableau REST /data -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
   <div id="app">
     <header>
-      <h1>Simple Dashboard Extension</h1>
+      <h1>Simple Tableau REST Dashboard</h1>
       <div>
         <span id="user-name" style="margin-right: 12px; font-size: 12px; color: #ccc;">
-          User: (not initialized)
+          Logged in as: (not connected)
         </span>
-        <span id="status-text">Initializing extension...</span>
+        <span id="status-text">Please log in.</span>
       </div>
     </header>
 
     <main>
-      <!-- LEFT PANEL: worksheet + data + dashboard builder -->
+      <!-- LEFT PANEL -->
       <section id="left-panel">
+        <!-- LOGIN -->
         <div class="card">
-          <h2>1. Select Worksheet</h2>
-          <label for="worksheet-select">Worksheet</label>
-          <select id="worksheet-select"></select>
-          <button id="btn-load-data">Load Data</button>
+          <h2>1. Login to Tableau</h2>
+          <label for="login-username">Username (email)</label>
+          <input id="login-username" type="text" />
+
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" />
+
+          <label for="login-site">
+            Site content URL (optional, empty = default site)
+          </label>
+          <input
+            id="login-site"
+            type="text"
+            placeholder="e.g. mysite  (or leave empty)"
+          />
+
+          <button id="btn-login">Connect</button>
+          <p class="info-text" id="login-info"></p>
+        </div>
+
+        <!-- WORKBOOK & VIEW -->
+        <div class="card">
+          <h2>2. Select Workbook & View</h2>
+
+          <label for="workbook-select">Workbook</label>
+          <select id="workbook-select"></select>
+          <button id="btn-load-workbooks">Load Workbooks</button>
+
+          <label for="view-select" style="margin-top: 8px;">View (Sheet)</label>
+          <select id="view-select"></select>
+          <button id="btn-load-views">Load Views for Workbook</button>
+
+          <button id="btn-load-data" class="primary" style="margin-top: 10px;">
+            Load Data for View
+          </button>
+
           <p class="info-text" id="data-info"></p>
         </div>
 
+        <!-- DATA PREVIEW -->
         <div class="card">
-          <h2>2. Data Preview</h2>
+          <h2>3. Data Preview</h2>
           <div id="table-container"></div>
         </div>
 
+        <!-- DASHBOARD BUILDER -->
         <div class="card">
-          <h2>3. Dashboard Builder</h2>
+          <h2>4. Dashboard Builder</h2>
           <p class="small-text">
-            Choose X (category), Y (numeric or blank for count) and chart type for each of up to 4 charts.
+            Choose X (category), Y (numeric or blank for count) and chart type
+            for each of up to 4 charts.
           </p>
 
           <div id="charts-config">
-            <!-- Chart config panels will be added here by JS -->
+            <!-- Chart config panels created in JS -->
           </div>
 
           <button id="btn-generate-dashboard" class="primary">
@@ -56,12 +92,12 @@
         </div>
       </section>
 
-      <!-- RIGHT PANEL: rendered charts -->
+      <!-- RIGHT PANEL -->
       <section id="right-panel">
         <div class="card">
           <h2>Charts</h2>
           <div id="dashboard-container">
-            <!-- Chart canvases will be added here by JS -->
+            <!-- Charts appear here -->
           </div>
         </div>
       </section>
