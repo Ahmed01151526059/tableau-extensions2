@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>e& AI Data Copilot</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Tableau Extensions API -->
+  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
+
+  <!-- Chart.js (for visual dashboards) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+  <div id="app">
+    <header>
+      <h1>e& AI Data Copilot</h1>
+      <p id="worksheet-name">No worksheet connected yet</p>
+    </header>
+
+    <main>
+      <section id="left-panel">
+        <div class="card">
+          <h2>Worksheet Data</h2>
+          <button id="btn-load-data">Load Data from Tableau</button>
+          <p id="data-info" class="info-text"></p>
+        </div>
+
+        <div class="card">
+          <h2>AI Dashboard</h2>
+          <button id="btn-ai-dashboard">Generate AI Dashboard</button>
+          <p class="small-text">Uses local Ollama to create multiple charts.</p>
+          <div id="dashboard-container"></div>
+        </div>
+      </section>
+
+      <section id="right-panel">
+        <div class="card">
+          <h2>Chat with Your Data</h2>
+          <div id="chat-window"></div>
+          <div id="chat-input-row">
+            <input id="chat-input" placeholder="Ask about your sheet..." />
+            <button id="btn-chat-send">Send</button>
+          </div>
+
+          <div id="chat-presets">
+            <button class="preset" data-q="Summarize this sheet and its insights">📊 Summary</button>
+            <button class="preset" data-q="Show the top 5 categories by sales or main metric">🏆 Top 5</button>
+            <button class="preset" data-q="Are there any outliers or anomalies in this dataset?">⚠️ Anomalies</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
