@@ -1,13 +1,12 @@
-// Use the same origin where the extension is loaded
-// (When hosted on GitHub Pages, this is just for info – we don't call any backend here)
 let dashboard = null;
 let worksheets = [];
 let currentWorksheet = null;
 let currentData = {
   columns: [],
-  rows: [] // array of row objects: { colName: formattedValue }
+  rows: [] // each row: { colName: formattedValue }
 };
 let charts = [];
+let currentUserName = null;
 
 // Helper to set status text
 function setStatus(msg) {
@@ -131,7 +130,6 @@ function generateDashboard() {
   const container = document.getElementById("dashboard-container");
   container.innerHTML = "";
 
-  // Destroy old chart objects
   charts.forEach((ch) => ch.destroy());
   charts = [];
 
@@ -155,11 +153,9 @@ function generateDashboard() {
     const type = (selectT.value || "bar").toLowerCase();
 
     if (!xCol) {
-      // skip chart if X not chosen
-      return;
+      return; // skip if no X
     }
 
-    // Group data by xCol
     const grouped = {};
     rows.forEach((row) => {
       const key = String(row[xCol]);
@@ -257,10 +253,9 @@ async function loadWorksheetData() {
     return;
   }
 
-  try:
+  try {
     setStatus(`Loading data from "${worksheetName}"...`);
 
-    // getSummaryDataAsync is simple and works on most versions.
     const options = {
       maxRows: 5000,
       ignoreSelection: true
@@ -272,7 +267,6 @@ async function loadWorksheetData() {
     const rows = summary.data.map((row) => {
       const obj = {};
       row.forEach((cell, idx) => {
-        // Use formattedValue for display
         obj[cols[idx]] = cell.formattedValue;
       });
       return obj;
@@ -288,17 +282,26 @@ async function loadWorksheetData() {
     initChartConfig(cols);
     setStatus("Data loaded successfully.");
   } catch (err) {
-    console.error(err);
+    console.error("Error in loadWorksheetData:", err);
     setStatus("Failed to load data from worksheet.");
   }
 }
 
-// Initialize extension and populate worksheet dropdown
+// Initialize extension and populate worksheet dropdown + username
 async function initExtension() {
   try {
     await tableau.extensions.initializeAsync();
+
     dashboard = tableau.extensions.dashboardContent.dashboard;
     worksheets = dashboard.worksheets;
+
+    const env = tableau.extensions.environment;
+    currentUserName = env && env.username ? env.username : null;
+
+    const userSpan = document.getElementById("user-name");
+    if (userSpan) {
+      userSpan.textContent = "User: " + (currentUserName || "(unknown)");
+    }
 
     const select = document.getElementById("worksheet-select");
     select.innerHTML = "";
@@ -309,22 +312,27 @@ async function initExtension() {
       select.appendChild(opt);
     });
 
-    setStatus(`Initialized. Found ${worksheets.length} worksheet(s).`);
+    setStatus(
+      `Initialized extension. User: ${currentUserName || "unknown"}. ` +
+      `Found ${worksheets.length} worksheet(s).`
+    );
   } catch (err) {
-    console.error(err);
-    setStatus("Failed to initialize extension. Check console for details.");
+    console.error("Failed to initialize extension:", err);
+    setStatus("Failed to initialize extension. Check console (F12) for details.");
   }
 }
 
 // Wire events
 document.addEventListener("DOMContentLoaded", () => {
-  document
-    .getElementById("btn-load-data")
-    .addEventListener("click", loadWorksheetData);
+  const btnLoad = document.getElementById("btn-load-data");
+  const btnDash = document.getElementById("btn-generate-dashboard");
 
-  document
-    .getElementById("btn-generate-dashboard")
-    .addEventListener("click", generateDashboard);
+  if (btnLoad) {
+    btnLoad.addEventListener("click", loadWorksheetData);
+  }
+  if (btnDash) {
+    btnDash.addEventListener("click", generateDashboard);
+  }
 
   initExtension();
 });
