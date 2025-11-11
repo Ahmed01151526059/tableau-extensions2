@@ -1,24 +1,29 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import requests
-import xml.etree.ElementTree as ET
-import pandas as pd
-from io import StringIO
+import os
 import json
+from io import StringIO
+import xml.etree.ElementTree as ET
 
-# ===== Tableau Server details (same method as before) =====
+import pandas as pd
+import requests
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+# ===== Tableau Server details =====
 DOMAIN = "https://prod-ch-a.online.tableau.com"
 API_VERSION = "3.25"
-SITE_CONTENT_URL = ""  # set if you use a named site, else leave empty for default
+SITE_CONTENT_URL = ""  # set if you use a named site; otherwise keep empty
 
 # ===== Ollama (local LLM) =====
 OLLAMA_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "llama3"  # change if you use a different model
+OLLAMA_MODEL = "llama3"  # change to your model if needed
 
-app = Flask(__name__)
-CORS(app)
+# ===== Flask app (serves frontend + API) =====
+# static_folder='.' -> serve files from this folder (index.html, app.js, styles.css)
+app = Flask(__name__, static_folder='.', static_url_path='')
+CORS(app)  # allows calling APIs from the frontend loaded in a browser / Tableau
 
 
+# ---------- Helpers ----------
 def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Convert mostly-numeric object columns into numeric dtype."""
     for col in df.columns:
@@ -26,7 +31,6 @@ def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
             try:
                 cleaned = df[col].replace(",", "", regex=True)
                 numeric = pd.to_numeric(cleaned, errors="coerce")
-                # if at least 60% of values become numeric, keep it
                 if numeric.notna().mean() > 0.6:
                     df[col] = numeric
             except Exception:
@@ -35,6 +39,7 @@ def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def call_ollama(prompt: str, timeout: int = 180) -> str:
+    """Call local Ollama and return the response text."""
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
@@ -50,8 +55,25 @@ def call_ollama(prompt: str, timeout: int = 180) -> str:
         return f"(Error calling Ollama: {e})"
 
 
-# ======== Tableau REST endpoints ========
+# ---------- Serve frontend (index.html, app.js, styles.css) ----------
+@app.route("/")
+def serve_index():
+    return send_from_directory(".", "index.html")
 
+
+@app.route("/index.html")
+def serve_index_direct():
+    return send_from_directory(".", "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    if os.path.exists(path):
+        return send_from_directory(".", path)
+    return jsonify({"error": "File not found"}), 404
+
+
+# ---------- Tableau auth ----------
 @app.route("/signin", methods=["POST"])
 def signin():
     """
@@ -81,7 +103,7 @@ def signin():
             signin_url,
             data=payload,
             headers=headers,
-            verify=False,  # match your Tkinter code behavior
+            verify=False,  # match your original script
             timeout=60,
         )
         if resp.status_code != 200:
@@ -97,15 +119,18 @@ def signin():
         site_elem = creds.find("t:site", namespace)
         site_id = site_elem.attrib["id"]
 
-        return jsonify({
-            "authToken": auth_token,
-            "siteId": site_id,
-            "message": "Successfully connected to Tableau Server."
-        })
+        return jsonify(
+            {
+                "authToken": auth_token,
+                "siteId": site_id,
+                "message": "Successfully connected to Tableau Server.",
+            }
+        )
     except Exception as e:
         return jsonify({"error": f"Connection failed: {e}"}), 500
 
 
+# ---------- Workbooks ----------
 @app.route("/workbooks", methods=["GET"])
 def get_workbooks():
     """
@@ -124,7 +149,9 @@ def get_workbooks():
     try:
         resp = requests.get(url, headers=headers, verify=False, timeout=60)
         if resp.status_code != 200:
-            return jsonify({"error": f"Failed to get workbooks: HTTP {resp.status_code}"}), 500
+            return jsonify(
+                {"error": f"Failed to get workbooks: HTTP {resp.status_code}"}
+            ), 500
 
         namespace = {"t": "http://tableau.com/api"}
         root = ET.fromstring(resp.text)
@@ -137,6 +164,7 @@ def get_workbooks():
         return jsonify({"error": f"Error reading workbooks: {e}"}), 500
 
 
+# ---------- Views (sheets) ----------
 @app.route("/views", methods=["GET"])
 def get_views():
     """
@@ -148,7 +176,9 @@ def get_views():
     workbook_id = request.args.get("workbookId", "")
 
     if not auth_token or not site_id or not workbook_id:
-        return jsonify({"error": "authToken, siteId and workbookId are required."}), 400
+        return jsonify(
+            {"error": "authToken, siteId and workbookId are required."}
+        ), 400
 
     headers = {"x-tableau-auth": auth_token}
     url = f"{DOMAIN}/api/{API_VERSION}/sites/{site_id}/workbooks/{workbook_id}/views"
@@ -156,7 +186,9 @@ def get_views():
     try:
         resp = requests.get(url, headers=headers, verify=False, timeout=60)
         if resp.status_code != 200:
-            return jsonify({"error": f"Failed to get views: HTTP {resp.status_code}"}), 500
+            return jsonify(
+                {"error": f"Failed to get views: HTTP {resp.status_code}"}
+            ), 500
 
         namespace = {"t": "http://tableau.com/api"}
         root = ET.fromstring(resp.text)
@@ -169,6 +201,7 @@ def get_views():
         return jsonify({"error": f"Error reading views: {e}"}), 500
 
 
+# ---------- View data ----------
 @app.route("/view-data", methods=["GET"])
 def get_view_data():
     """
@@ -180,7 +213,9 @@ def get_view_data():
     view_id = request.args.get("viewId", "")
 
     if not auth_token or not site_id or not view_id:
-        return jsonify({"error": "authToken, siteId and viewId are required."}), 400
+        return jsonify(
+            {"error": "authToken, siteId and viewId are required."}
+        ), 400
 
     headers = {"x-tableau-auth": auth_token}
     url = f"{DOMAIN}/api/{API_VERSION}/sites/{site_id}/views/{view_id}/data"
@@ -188,7 +223,9 @@ def get_view_data():
     try:
         resp = requests.get(url, headers=headers, verify=False, timeout=60)
         if resp.status_code != 200:
-            return jsonify({"error": f"Failed to get view data: HTTP {resp.status_code}"}), 500
+            return jsonify(
+                {"error": f"Failed to get view data: HTTP {resp.status_code}"}
+            ), 500
 
         df = pd.read_csv(StringIO(resp.text))
         df = _coerce_numeric_columns(df)
@@ -200,8 +237,7 @@ def get_view_data():
         return jsonify({"error": f"Error reading view data: {e}"}), 500
 
 
-# ======== AI: chat & dashboard ========
-
+# ---------- Chat ----------
 @app.route("/chat", methods=["POST"])
 def chat():
     """
@@ -238,6 +274,7 @@ def chat():
     return jsonify({"answer": answer})
 
 
+# ---------- AI Dashboard ----------
 @app.route("/ai-dashboard", methods=["POST"])
 def ai_dashboard():
     """
@@ -288,7 +325,7 @@ def ai_dashboard():
     if text.startswith("```"):
         first_nl = text.find("\n")
         if first_nl != -1:
-            text = text[first_nl + 1:]
+            text = text[first_nl + 1 :]
         text = text.replace("```", "")
 
     start = text.find("{")
@@ -296,7 +333,7 @@ def ai_dashboard():
     if start == -1 or end == -1 or end <= start:
         return jsonify({"error": "AI did not return recognizable JSON.", "raw": raw}), 400
 
-    json_text = text[start:end + 1]
+    json_text = text[start : end + 1]
     try:
         spec = json.loads(json_text)
     except json.JSONDecodeError as e:
@@ -315,5 +352,5 @@ def ai_dashboard():
 
 
 if __name__ == "__main__":
-    # Run backend on localhost:5000
+    # Run backend + frontend on 127.0.0.1:5000
     app.run(host="127.0.0.1", port=5000, debug=True)
