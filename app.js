@@ -1,20 +1,231 @@
-let dashboard = null;
-let worksheets = [];
-let currentWorksheet = null;
+// ===== Tableau REST config =====
+const DOMAIN = "https://prod-ch-a.online.tableau.com"; // your Tableau Cloud
+const API_VERSION = "3.25";
+const SITE_CONTENT_URL_DEFAULT = ""; // set if you use a named site
+
+// ===== Session state =====
+const session = {
+  authToken: null,
+  siteId: null,
+  userName: null,
+};
+
+let currentWorkbooks = [];
+let currentViews = [];
 let currentData = {
   columns: [],
-  rows: [] // each row: { colName: formattedValue }
+  rows: [], // array of objects { col: value }
 };
 let charts = [];
-let currentUserName = null;
 
-// Helper to set status text
+// ===== Helper UI functions =====
 function setStatus(msg) {
   const el = document.getElementById("status-text");
   if (el) el.textContent = msg;
 }
 
-// Initialize chart config UI (4 charts)
+function setLoginInfo(msg) {
+  const el = document.getElementById("login-info");
+  if (el) el.textContent = msg;
+}
+
+function setUserName(name) {
+  const el = document.getElementById("user-name");
+  if (el) el.textContent = "Logged in as: " + (name || "(unknown)");
+}
+
+// ===== REST helpers =====
+
+async function tableauSignin(username, password, siteContentUrl) {
+  const url = `${DOMAIN}/api/${API_VERSION}/auth/signin`;
+  const site = siteContentUrl || SITE_CONTENT_URL_DEFAULT;
+
+  const xmlBody = `
+    <tsRequest>
+      <credentials name="${username}" password="${password}">
+        <site contentUrl="${site}" />
+      </credentials>
+    </tsRequest>
+  `.trim();
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/xml" },
+    body: xmlBody,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Signin failed: HTTP ${res.status}`);
+  }
+
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/xml");
+
+  const creds = doc.getElementsByTagName("credentials")[0];
+  if (!creds) {
+    throw new Error("Signin response missing <credentials>.");
+  }
+
+  const token = creds.getAttribute("token");
+  const siteElem = creds.getElementsByTagName("site")[0];
+  const siteId = siteElem ? siteElem.getAttribute("id") : null;
+
+  const userElem = creds.getElementsByTagName("user")[0];
+  const userName = userElem ? userElem.getAttribute("name") : null;
+
+  if (!token || !siteId) {
+    throw new Error("Signin response missing token or site id.");
+  }
+
+  return { authToken: token, siteId, userName };
+}
+
+async function fetchWorkbooks() {
+  const url = `${DOMAIN}/api/${API_VERSION}/sites/${encodeURIComponent(
+    session.siteId
+  )}/workbooks?pageSize=1000`;
+
+  const res = await fetch(url, {
+    headers: { "X-Tableau-Auth": session.authToken },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Workbooks failed: HTTP ${res.status}`);
+  }
+
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/xml");
+
+  const wbs = Array.from(doc.getElementsByTagName("workbook")).map((wb) => ({
+    id: wb.getAttribute("id"),
+    name: wb.getAttribute("name"),
+  }));
+
+  return wbs;
+}
+
+async function fetchViews(workbookId) {
+  const url = `${DOMAIN}/api/${API_VERSION}/sites/${encodeURIComponent(
+    session.siteId
+  )}/workbooks/${encodeURIComponent(workbookId)}/views`;
+
+  const res = await fetch(url, {
+    headers: { "X-Tableau-Auth": session.authToken },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Views failed: HTTP ${res.status}`);
+  }
+
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/xml");
+
+  const vs = Array.from(doc.getElementsByTagName("view")).map((v) => ({
+    id: v.getAttribute("id"),
+    name: v.getAttribute("name"),
+  }));
+
+  return vs;
+}
+
+async function fetchViewData(viewId) {
+  const url = `${DOMAIN}/api/${API_VERSION}/sites/${encodeURIComponent(
+    session.siteId
+  )}/views/${encodeURIComponent(viewId)}/data`;
+
+  const res = await fetch(url, {
+    headers: { "X-Tableau-Auth": session.authToken },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Data failed: HTTP ${res.status}`);
+  }
+
+  const csvText = await res.text();
+
+  // Use PapaParse to parse CSV
+  const parsed = Papa.parse(csvText, {
+    header: true,
+    skipEmptyLines: true,
+  });
+
+  if (parsed.errors && parsed.errors.length) {
+    console.warn("CSV parse errors:", parsed.errors);
+  }
+
+  const cols = parsed.meta.fields || [];
+  const rows = parsed.data || [];
+
+  return { columns: cols, rows: rows };
+}
+
+// ===== UI updating functions =====
+
+function populateWorkbookDropdown() {
+  const sel = document.getElementById("workbook-select");
+  sel.innerHTML = "";
+
+  currentWorkbooks.forEach((wb) => {
+    const opt = document.createElement("option");
+    opt.value = wb.id;
+    opt.textContent = wb.name;
+    sel.appendChild(opt);
+  });
+}
+
+function populateViewDropdown() {
+  const sel = document.getElementById("view-select");
+  sel.innerHTML = "";
+
+  currentViews.forEach((v) => {
+    const opt = document.createElement("option");
+    opt.value = v.id;
+    opt.textContent = v.name;
+    sel.appendChild(opt);
+  });
+}
+
+function renderTable() {
+  const container = document.getElementById("table-container");
+  container.innerHTML = "";
+
+  const cols = currentData.columns;
+  const rows = currentData.rows;
+
+  if (!cols.length || !rows.length) {
+    container.textContent = "No data loaded.";
+    return;
+  }
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  cols.forEach((c) => {
+    const th = document.createElement("th");
+    th.textContent = c;
+    trHead.appendChild(th);
+  });
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.slice(0, 100).forEach((row) => {
+    const tr = document.createElement("tr");
+    cols.forEach((c) => {
+      const td = document.createElement("td");
+      td.textContent = row[c];
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  container.appendChild(table);
+}
+
 function initChartConfig(columns) {
   const container = document.getElementById("charts-config");
   container.innerHTML = "";
@@ -86,46 +297,8 @@ function initChartConfig(columns) {
   }
 }
 
-// Render data table
-function renderTable() {
-  const container = document.getElementById("table-container");
-  container.innerHTML = "";
+// ===== Charts =====
 
-  const cols = currentData.columns;
-  const rows = currentData.rows;
-
-  if (!cols.length || !rows.length) {
-    container.textContent = "No data loaded.";
-    return;
-  }
-
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const trHead = document.createElement("tr");
-  cols.forEach((c) => {
-    const th = document.createElement("th");
-    th.textContent = c;
-    trHead.appendChild(th);
-  });
-  thead.appendChild(trHead);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  rows.slice(0, 100).forEach((row) => {
-    const tr = document.createElement("tr");
-    cols.forEach((c) => {
-      const td = document.createElement("td");
-      td.textContent = row[c];
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-
-  table.appendChild(tbody);
-  container.appendChild(table);
-}
-
-// Generate dashboard charts
 function generateDashboard() {
   const container = document.getElementById("dashboard-container");
   container.innerHTML = "";
@@ -153,7 +326,7 @@ function generateDashboard() {
     const type = (selectT.value || "bar").toLowerCase();
 
     if (!xCol) {
-      return; // skip if no X
+      return; // skip chart if X not selected
     }
 
     const grouped = {};
@@ -163,7 +336,9 @@ function generateDashboard() {
 
       if (yCol) {
         const raw = row[yCol];
-        const num = parseFloat(String(raw || "").replace(/,/g, "").replace(/[^\d.-]/g, ""));
+        const num = parseFloat(
+          String(raw || "").replace(/,/g, "").replace(/[^\d.-]/g, "")
+        );
         if (!Number.isNaN(num)) {
           val = num;
         }
@@ -195,149 +370,165 @@ function generateDashboard() {
         datasets: [
           {
             label: yCol ? `${yCol} by ${xCol}` : `Count by ${xCol}`,
-            data: values
-          }
-        ]
+            data: values,
+          },
+        ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            labels: { color: "#fff", font: { size: 9 } }
+            labels: { color: "#fff", font: { size: 9 } },
           },
           title: {
             display: true,
             text: `Chart ${index + 1}`,
             color: "#fff",
-            font: { size: 11, weight: "bold" }
-          }
+            font: { size: 11, weight: "bold" },
+          },
         },
         scales:
           chartType === "pie"
             ? {}
             : {
                 x: { ticks: { color: "#fff", font: { size: 9 } } },
-                y: { ticks: { color: "#fff", font: { size: 9 } } }
-              }
-      }
+                y: { ticks: { color: "#fff", font: { size: 9 } } },
+              },
+      },
     });
 
     charts.push(chart);
   });
 
   if (!charts.length) {
-    setStatus("No charts were configured. Please choose X columns and try again.");
+    setStatus("No charts configured. Choose X columns and try again.");
   } else {
     setStatus(`Rendered ${charts.length} chart(s).`);
   }
 }
 
-// Load data from selected worksheet
-async function loadWorksheetData() {
-  if (!dashboard || !worksheets.length) {
-    setStatus("Extension not fully initialized.");
+// ===== Event handlers =====
+
+async function handleLogin() {
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
+  const siteContentUrl = document.getElementById("login-site").value.trim();
+
+  if (!username || !password) {
+    setLoginInfo("Please enter username and password.");
     return;
   }
 
-  const select = document.getElementById("worksheet-select");
-  const worksheetName = select.value;
-  if (!worksheetName) {
-    setStatus("Please select a worksheet.");
-    return;
-  }
-
-  currentWorksheet = worksheets.find((w) => w.name === worksheetName);
-  if (!currentWorksheet) {
-    setStatus("Worksheet not found.");
-    return;
-  }
+  setStatus("Signing in to Tableau...");
+  setLoginInfo("");
 
   try {
-    setStatus(`Loading data from "${worksheetName}"...`);
+    const res = await tableauSignin(username, password, siteContentUrl);
+    session.authToken = res.authToken;
+    session.siteId = res.siteId;
+    session.userName = res.userName;
 
-    const options = {
-      maxRows: 5000,
-      ignoreSelection: true
-    };
+    setUserName(res.userName);
+    setStatus("Connected to Tableau.");
+    setLoginInfo("Successfully connected.");
 
-    const summary = await currentWorksheet.getSummaryDataAsync(options);
+    // Auto-load workbooks
+    await handleLoadWorkbooks();
+  } catch (err) {
+    console.error("Login error:", err);
+    setStatus("Login failed.");
+    setLoginInfo(err.message);
+  }
+}
 
-    const cols = summary.columns.map((c) => c.fieldName || c.caption);
-    const rows = summary.data.map((row) => {
-      const obj = {};
-      row.forEach((cell, idx) => {
-        obj[cols[idx]] = cell.formattedValue;
-      });
-      return obj;
-    });
+async function handleLoadWorkbooks() {
+  if (!session.authToken || !session.siteId) {
+    setStatus("Please log in first.");
+    return;
+  }
 
-    currentData.columns = cols;
-    currentData.rows = rows;
+  setStatus("Loading workbooks...");
+  try {
+    currentWorkbooks = await fetchWorkbooks();
+    populateWorkbookDropdown();
+    setStatus(`Loaded ${currentWorkbooks.length} workbooks.`);
+  } catch (err) {
+    console.error("Workbooks error:", err);
+    setStatus("Failed to load workbooks.");
+  }
+}
 
-    document.getElementById("data-info").textContent =
-      `Loaded ${rows.length} rows, ${cols.length} columns.`;
+async function handleLoadViews() {
+  if (!session.authToken || !session.siteId) {
+    setStatus("Please log in first.");
+    return;
+  }
+
+  const wbSel = document.getElementById("workbook-select");
+  const workbookId = wbSel.value;
+  if (!workbookId) {
+    setStatus("Please select a workbook.");
+    return;
+  }
+
+  setStatus("Loading views...");
+  try {
+    currentViews = await fetchViews(workbookId);
+    populateViewDropdown();
+    setStatus(`Loaded ${currentViews.length} views.`);
+  } catch (err) {
+    console.error("Views error:", err);
+    setStatus("Failed to load views.");
+  }
+}
+
+async function handleLoadData() {
+  if (!session.authToken || !session.siteId) {
+    setStatus("Please log in first.");
+    return;
+  }
+
+  const viewSel = document.getElementById("view-select");
+  const viewId = viewSel.value;
+  if (!viewId) {
+    setStatus("Please select a view.");
+    return;
+  }
+
+  setStatus("Loading view data...");
+  try {
+    const data = await fetchViewData(viewId);
+    currentData = data;
+
+    document.getElementById(
+      "data-info"
+    ).textContent = `Loaded ${data.rows.length} rows, ${data.columns.length} columns.`;
 
     renderTable();
-    initChartConfig(cols);
+    initChartConfig(data.columns);
     setStatus("Data loaded successfully.");
   } catch (err) {
-    console.error("Error in loadWorksheetData:", err);
-    setStatus("Failed to load data from worksheet.");
+    console.error("Data error:", err);
+    setStatus("Failed to load view data.");
   }
 }
 
-// Initialize extension and populate worksheet dropdown + username
-async function initExtension() {
-  try {
-    if (!window.tableau || !tableau.extensions) {
-      // This happens if you open index.html directly in a browser
-      throw new Error("Tableau Extensions API not available. Are you running inside a Tableau dashboard?");
-    }
-
-    await tableau.extensions.initializeAsync();
-
-    dashboard = tableau.extensions.dashboardContent.dashboard;
-    worksheets = dashboard.worksheets;
-
-    const env = tableau.extensions.environment;
-    currentUserName = env && env.username ? env.username : null;
-
-    const userSpan = document.getElementById("user-name");
-    if (userSpan) {
-      userSpan.textContent = "User: " + (currentUserName || "(unknown)");
-    }
-
-    const select = document.getElementById("worksheet-select");
-    select.innerHTML = "";
-    worksheets.forEach((ws) => {
-      const opt = document.createElement("option");
-      opt.value = ws.name;
-      opt.textContent = ws.name;
-      select.appendChild(opt);
-    });
-
-    setStatus(
-      `Initialized extension. User: ${currentUserName || "unknown"}. ` +
-      `Found ${worksheets.length} worksheet(s).`
-    );
-  } catch (err) {
-    console.error("Failed to initialize extension:", err);
-    setStatus("Failed to initialize extension: " + err.message);
-  }
-}
-
-// Wire events
+// ===== Wire up events =====
 document.addEventListener("DOMContentLoaded", () => {
-  const btnLoad = document.getElementById("btn-load-data");
-  const btnDash = document.getElementById("btn-generate-dashboard");
+  document.getElementById("btn-login").addEventListener("click", handleLogin);
+  document
+    .getElementById("btn-load-workbooks")
+    .addEventListener("click", handleLoadWorkbooks);
+  document
+    .getElementById("btn-load-views")
+    .addEventListener("click", handleLoadViews);
+  document
+    .getElementById("btn-load-data")
+    .addEventListener("click", handleLoadData);
+  document
+    .getElementById("btn-generate-dashboard")
+    .addEventListener("click", generateDashboard);
 
-  if (btnLoad) {
-    btnLoad.addEventListener("click", loadWorksheetData);
-  }
-  if (btnDash) {
-    btnDash.addEventListener("click", generateDashboard);
-  }
-
-  initExtension();
+  setStatus("Please log in.");
 });
