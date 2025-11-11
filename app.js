@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://127.0.0.1:5000";
+const BACKEND_URL = window.location.origin;
 
 let authToken = null;
 let siteId = null;
@@ -368,3 +368,4 @@ document.addEventListener("DOMContentLoaded", () => {
       .catch(() => setStatus("Extension initialized (fallback)."));
   }
 });
+
