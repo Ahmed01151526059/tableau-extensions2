@@ -2,81 +2,61 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>AI Data Copilot</title>
+  <title>Simple Tableau Dashboard Extension</title>
+
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- Tableau Extensions API (optional, just to integrate nicely) -->
-  <script src="https://tableau.github.io/extensions-api/lib/tableau.extensions.1.latest.js"></script>
+  <!-- Tableau Extensions API -->
+  <script src="https://extensions.tableauusercontent.com/resources/tableau.extensions.1.latest.min.js"></script>
 
-  <!-- Chart.js for dashboard charts -->
+  <!-- Chart.js for charts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <div id="app">
     <header>
-      <h1>AI Data Copilot</h1>
-      <span id="status-text"></span>
+      <h1>Simple Dashboard Extension</h1>
+      <span id="status-text">Initializing extension...</span>
     </header>
 
     <main>
+      <!-- LEFT PANEL: worksheet + data + dashboard builder -->
       <section id="left-panel">
         <div class="card">
-          <h2>Login to Tableau</h2>
-          <label>Username</label>
-          <input type="text" id="input-username" />
-          <label>Password</label>
-          <input type="password" id="input-password" />
-          <label>Site (optional)</label>
-          <input type="text" id="input-site" placeholder="leave empty for default" />
-          <button id="btn-connect">Connect</button>
-          <p class="info-text" id="login-info"></p>
-        </div>
-
-        <div class="card">
-          <h2>Select Workbook & Sheet</h2>
-          <label>Workbook</label>
-          <select id="select-workbook"></select>
-          <button id="btn-load-workbooks">Load Workbooks</button>
-
-          <label>Sheet (View)</label>
-          <select id="select-view"></select>
-          <button id="btn-load-views">Load Sheets</button>
-
-          <button id="btn-display-data" class="primary">Display Data</button>
+          <h2>1. Select Worksheet</h2>
+          <label for="worksheet-select">Worksheet</label>
+          <select id="worksheet-select"></select>
+          <button id="btn-load-data">Load Data</button>
           <p class="info-text" id="data-info"></p>
         </div>
 
         <div class="card">
-          <h2>Data Preview</h2>
+          <h2>2. Data Preview</h2>
           <div id="table-container"></div>
         </div>
 
         <div class="card">
-          <h2>AI Dashboard</h2>
-          <button id="btn-ai-dashboard">AI Generated Dashboard</button>
-          <p class="small-text">LLM reads full sheet data and designs multiple charts.</p>
-          <div id="dashboard-container"></div>
+          <h2>3. Dashboard Builder</h2>
+          <p class="small-text">
+            Choose X (category), Y (numeric or blank for count) and chart type for each of up to 4 charts.
+          </p>
+
+          <div id="charts-config">
+            <!-- Chart config panels will be added here by JS -->
+          </div>
+
+          <button id="btn-generate-dashboard" class="primary">
+            Generate Dashboard
+          </button>
         </div>
       </section>
 
+      <!-- RIGHT PANEL: rendered charts -->
       <section id="right-panel">
         <div class="card">
-          <h2>Chat with Your Data</h2>
-          <div id="chat-window"></div>
-          <div id="chat-input-row">
-            <input id="chat-input" placeholder="Ask anything about the sheet..." />
-            <button id="btn-chat-send">Send</button>
-          </div>
-          <div id="chat-presets">
-            <button class="preset" data-q="Give me a summary of this sheet and its main insights.">
-              Summary
-            </button>
-            <button class="preset" data-q="Show the top 5 categories or groups by their main numeric metric.">
-              Top 5
-            </button>
-            <button class="preset" data-q="Are there any anomalies or outliers in this data? Explain briefly.">
-              Anomalies
-            </button>
+          <h2>Charts</h2>
+          <div id="dashboard-container">
+            <!-- Chart canvases will be added here by JS -->
           </div>
         </div>
       </section>
