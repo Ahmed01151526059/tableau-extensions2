@@ -290,6 +290,11 @@ async function loadWorksheetData() {
 // Initialize extension and populate worksheet dropdown + username
 async function initExtension() {
   try {
+    if (!window.tableau || !tableau.extensions) {
+      // This happens if you open index.html directly in a browser
+      throw new Error("Tableau Extensions API not available. Are you running inside a Tableau dashboard?");
+    }
+
     await tableau.extensions.initializeAsync();
 
     dashboard = tableau.extensions.dashboardContent.dashboard;
@@ -318,7 +323,7 @@ async function initExtension() {
     );
   } catch (err) {
     console.error("Failed to initialize extension:", err);
-    setStatus("Failed to initialize extension. Check console (F12) for details.");
+    setStatus("Failed to initialize extension: " + err.message);
   }
 }
 
