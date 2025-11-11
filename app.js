@@ -1,266 +1,178 @@
-const BACKEND_URL = window.location.origin;
+// Use the same origin where the extension is loaded
+// (When hosted on GitHub Pages, this is just for info – we don't call any backend here)
+let dashboard = null;
+let worksheets = [];
+let currentWorksheet = null;
+let currentData = {
+  columns: [],
+  rows: [] // array of row objects: { colName: formattedValue }
+};
+let charts = [];
 
-let authToken = null;
-let siteId = null;
-let currentWorkbooks = [];
-let currentViews = [];
-let currentRows = [];
-let chartObjects = [];
-
-function setStatus(text) {
-  document.getElementById("status-text").textContent = text;
+// Helper to set status text
+function setStatus(msg) {
+  const el = document.getElementById("status-text");
+  if (el) el.textContent = msg;
 }
 
-function addChatMessage(sender, text, cls = "ai") {
-  const div = document.createElement("div");
-  div.className = `chat-msg ${cls}`;
-  div.textContent = `${sender}: ${text}`;
-  const win = document.getElementById("chat-window");
-  win.appendChild(div);
-  win.scrollTop = win.scrollHeight;
+// Initialize chart config UI (4 charts)
+function initChartConfig(columns) {
+  const container = document.getElementById("charts-config");
+  container.innerHTML = "";
+
+  for (let i = 0; i < 4; i++) {
+    const div = document.createElement("div");
+    div.className = "chart-config";
+    div.dataset.index = String(i);
+
+    const title = document.createElement("h3");
+    title.textContent = `Chart ${i + 1}`;
+    div.appendChild(title);
+
+    // X selector
+    const labelX = document.createElement("label");
+    labelX.textContent = "X (category):";
+    div.appendChild(labelX);
+
+    const selectX = document.createElement("select");
+    selectX.className = "cfg-x";
+    const emptyOptX = document.createElement("option");
+    emptyOptX.value = "";
+    emptyOptX.textContent = "-- none --";
+    selectX.appendChild(emptyOptX);
+    columns.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      selectX.appendChild(opt);
+    });
+    div.appendChild(selectX);
+
+    // Y selector
+    const labelY = document.createElement("label");
+    labelY.textContent = "Y (numeric, optional):";
+    div.appendChild(labelY);
+
+    const selectY = document.createElement("select");
+    selectY.className = "cfg-y";
+    const emptyOptY = document.createElement("option");
+    emptyOptY.value = "";
+    emptyOptY.textContent = "-- count --";
+    selectY.appendChild(emptyOptY);
+    columns.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      selectY.appendChild(opt);
+    });
+    div.appendChild(selectY);
+
+    // Type selector
+    const labelT = document.createElement("label");
+    labelT.textContent = "Chart type:";
+    div.appendChild(labelT);
+
+    const selectT = document.createElement("select");
+    selectT.className = "cfg-type";
+    ["bar", "line", "pie"].forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      selectT.appendChild(opt);
+    });
+    selectT.value = "bar";
+    div.appendChild(selectT);
+
+    container.appendChild(div);
+  }
 }
 
-async function postJSON(url, body) {
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+// Render data table
+function renderTable() {
+  const container = document.getElementById("table-container");
+  container.innerHTML = "";
+
+  const cols = currentData.columns;
+  const rows = currentData.rows;
+
+  if (!cols.length || !rows.length) {
+    container.textContent = "No data loaded.";
+    return;
+  }
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const trHead = document.createElement("tr");
+  cols.forEach((c) => {
+    const th = document.createElement("th");
+    th.textContent = c;
+    trHead.appendChild(th);
   });
-  const json = await resp.json();
-  if (!resp.ok) {
-    throw new Error(json.error || JSON.stringify(json));
-  }
-  return json;
-}
+  thead.appendChild(trHead);
+  table.appendChild(thead);
 
-async function getJSON(url) {
-  const resp = await fetch(url);
-  const json = await resp.json();
-  if (!resp.ok) {
-    throw new Error(json.error || JSON.stringify(json));
-  }
-  return json;
-}
-
-// ===== LOGIN =====
-async function handleConnect() {
-  const username = document.getElementById("input-username").value;
-  const password = document.getElementById("input-password").value;
-  const site = document.getElementById("input-site").value;
-
-  if (!username || !password) {
-    document.getElementById("login-info").textContent = "Please enter username and password.";
-    return;
-  }
-
-  document.getElementById("login-info").textContent = "Connecting...";
-  setStatus("Signing in to Tableau...");
-
-  try {
-    const data = await postJSON(`${BACKEND_URL}/signin`, {
-      username,
-      password,
-      siteContentUrl: site,
+  const tbody = document.createElement("tbody");
+  rows.slice(0, 100).forEach((row) => {
+    const tr = document.createElement("tr");
+    cols.forEach((c) => {
+      const td = document.createElement("td");
+      td.textContent = row[c];
+      tr.appendChild(td);
     });
-    authToken = data.authToken;
-    siteId = data.siteId;
-    document.getElementById("login-info").textContent = data.message || "Connected.";
-    setStatus("Connected to Tableau.");
-  } catch (err) {
-    document.getElementById("login-info").textContent = "Login failed: " + err.message;
-    setStatus("Login failed.");
-  }
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  container.appendChild(table);
 }
 
-// ===== WORKBOOKS =====
-async function loadWorkbooks() {
-  if (!authToken || !siteId) {
-    setStatus("Please connect first.");
-    return;
-  }
-  setStatus("Loading workbooks...");
-  try {
-    const data = await getJSON(
-      `${BACKEND_URL}/workbooks?authToken=${encodeURIComponent(authToken)}&siteId=${encodeURIComponent(siteId)}`
-    );
-    currentWorkbooks = data.workbooks || [];
-    const sel = document.getElementById("select-workbook");
-    sel.innerHTML = "";
-    currentWorkbooks.forEach((wb) => {
-      const opt = document.createElement("option");
-      opt.value = wb.id;
-      opt.textContent = wb.name;
-      sel.appendChild(opt);
-    });
-    setStatus(`Loaded ${currentWorkbooks.length} workbooks.`);
-  } catch (err) {
-    setStatus("Failed to load workbooks: " + err.message);
-  }
-}
+// Generate dashboard charts
+function generateDashboard() {
+  const container = document.getElementById("dashboard-container");
+  container.innerHTML = "";
 
-// ===== VIEWS =====
-async function loadViews() {
-  if (!authToken || !siteId) {
-    setStatus("Please connect first.");
-    return;
-  }
-  const wbSel = document.getElementById("select-workbook");
-  const workbookId = wbSel.value;
-  if (!workbookId) {
-    setStatus("Please select a workbook.");
+  // Destroy old chart objects
+  charts.forEach((ch) => ch.destroy());
+  charts = [];
+
+  const cols = currentData.columns;
+  const rows = currentData.rows;
+
+  if (!cols.length || !rows.length) {
+    setStatus("No data loaded. Please load data first.");
     return;
   }
 
-  setStatus("Loading sheets...");
-  try {
-    const data = await getJSON(
-      `${BACKEND_URL}/views?authToken=${encodeURIComponent(authToken)}&siteId=${encodeURIComponent(siteId)}&workbookId=${encodeURIComponent(workbookId)}`
-    );
-    currentViews = data.views || [];
-    const sel = document.getElementById("select-view");
-    sel.innerHTML = "";
-    currentViews.forEach((v) => {
-      const opt = document.createElement("option");
-      opt.value = v.id;
-      opt.textContent = v.name;
-      sel.appendChild(opt);
-    });
-    setStatus(`Loaded ${currentViews.length} sheets.`);
-  } catch (err) {
-    setStatus("Failed to load sheets: " + err.message);
-  }
-}
+  const cfgDivs = document.querySelectorAll(".chart-config");
 
-// ===== DATA PREVIEW =====
-async function displayData() {
-  if (!authToken || !siteId) {
-    setStatus("Please connect first.");
-    return;
-  }
-  const viewSel = document.getElementById("select-view");
-  const viewId = viewSel.value;
-  if (!viewId) {
-    setStatus("Please select a sheet.");
-    return;
-  }
+  cfgDivs.forEach((cfgDiv, index) => {
+    const selectX = cfgDiv.querySelector(".cfg-x");
+    const selectY = cfgDiv.querySelector(".cfg-y");
+    const selectT = cfgDiv.querySelector(".cfg-type");
 
-  setStatus("Loading sheet data...");
-  try {
-    const data = await getJSON(
-      `${BACKEND_URL}/view-data?authToken=${encodeURIComponent(authToken)}&siteId=${encodeURIComponent(siteId)}&viewId=${encodeURIComponent(viewId)}`
-    );
-    const columns = data.columns || [];
-    const rows = data.rows || [];
-    currentRows = rows;
+    const xCol = selectX.value;
+    const yCol = selectY.value || null;
+    const type = (selectT.value || "bar").toLowerCase();
 
-    const info = document.getElementById("data-info");
-    info.textContent = `Loaded ${rows.length} rows, ${columns.length} columns.`;
-
-    const container = document.getElementById("table-container");
-    container.innerHTML = "";
-
-    if (!columns.length) {
-      container.textContent = "No data.";
+    if (!xCol) {
+      // skip chart if X not chosen
       return;
     }
 
-    const table = document.createElement("table");
-    const thead = document.createElement("thead");
-    const trHead = document.createElement("tr");
-    columns.forEach((c) => {
-      const th = document.createElement("th");
-      th.textContent = c;
-      trHead.appendChild(th);
-    });
-    thead.appendChild(trHead);
-    table.appendChild(thead);
-
-    const tbody = document.createElement("tbody");
-    rows.slice(0, 100).forEach((row) => {
-      const tr = document.createElement("tr");
-      columns.forEach((c) => {
-        const td = document.createElement("td");
-        td.textContent = row[c];
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    container.appendChild(table);
-
-    setStatus("Sheet data displayed.");
-  } catch (err) {
-    setStatus("Failed to load sheet data: " + err.message);
-  }
-}
-
-// ===== CHAT =====
-async function sendChat(question) {
-  if (!currentRows.length) {
-    addChatMessage("System", "Please display data first.", "system");
-    return;
-  }
-  if (!question) return;
-  addChatMessage("You", question, "user");
-
-  try {
-    const data = await postJSON(`${BACKEND_URL}/chat`, {
-      question,
-      data: currentRows,
-    });
-    addChatMessage("AI", data.answer || "(No answer)", "ai");
-  } catch (err) {
-    addChatMessage("System", "Error: " + err.message, "system");
-  }
-}
-
-// ===== AI DASHBOARD =====
-async function generateAIDashboard() {
-  if (!currentRows.length) {
-    addChatMessage("System", "Please display data first.", "system");
-    return;
-  }
-  setStatus("Letting AI design dashboard...");
-
-  try {
-    const spec = await postJSON(`${BACKEND_URL}/ai-dashboard`, {
-      data: currentRows,
-    });
-    renderDashboard(spec.charts || []);
-    setStatus("AI dashboard created.");
-  } catch (err) {
-    addChatMessage("System", "AI dashboard error: " + err.message, "system");
-    setStatus("AI dashboard failed.");
-  }
-}
-
-function renderDashboard(chartsSpec) {
-  const container = document.getElementById("dashboard-container");
-  container.innerHTML = "";
-  chartObjects.forEach((c) => c.destroy());
-  chartObjects = [];
-
-  const specs = chartsSpec.slice(0, 4);
-
-  specs.forEach((cfg) => {
-    const xcol = cfg.x;
-    const ycol = cfg.y;
-    const type = (cfg.type || "bar").toLowerCase();
-    const title = cfg.title || `${type} chart`;
-
-    if (!xcol) return;
-
+    // Group data by xCol
     const grouped = {};
-    currentRows.forEach((row) => {
-      const key = String(row[xcol]);
+    rows.forEach((row) => {
+      const key = String(row[xCol]);
       let val = 1;
-      if (ycol) {
-        const raw = row[ycol];
+
+      if (yCol) {
+        const raw = row[yCol];
         const num = parseFloat(String(raw || "").replace(/,/g, "").replace(/[^\d.-]/g, ""));
         if (!Number.isNaN(num)) {
           val = num;
         }
       }
+
       if (!(key in grouped)) grouped[key] = 0;
       grouped[key] += val;
     });
@@ -268,13 +180,14 @@ function renderDashboard(chartsSpec) {
     const labels = Object.keys(grouped).slice(0, 10);
     const values = labels.map((k) => grouped[k]);
 
-    const div = document.createElement("div");
-    div.className = "dashboard-chart";
+    const slot = document.createElement("div");
+    slot.className = "chart-slot";
     const canvas = document.createElement("canvas");
-    div.appendChild(canvas);
-    container.appendChild(div);
+    slot.appendChild(canvas);
+    container.appendChild(slot);
 
     const ctx = canvas.getContext("2d");
+
     let chartType = "bar";
     if (type === "line") chartType = "line";
     if (type === "pie") chartType = "pie";
@@ -285,87 +198,133 @@ function renderDashboard(chartsSpec) {
         labels,
         datasets: [
           {
-            label: title,
-            data: values,
-          },
-        ],
+            label: yCol ? `${yCol} by ${xCol}` : `Count by ${xCol}`,
+            data: values
+          }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            labels: { color: "#fff", font: { size: 9 } },
+            labels: { color: "#fff", font: { size: 9 } }
           },
           title: {
             display: true,
-            text: title,
+            text: `Chart ${index + 1}`,
             color: "#fff",
-            font: { size: 11, weight: "bold" },
-          },
+            font: { size: 11, weight: "bold" }
+          }
         },
         scales:
           chartType === "pie"
             ? {}
             : {
                 x: { ticks: { color: "#fff", font: { size: 9 } } },
-                y: { ticks: { color: "#fff", font: { size: 9 } } },
-              },
-      },
+                y: { ticks: { color: "#fff", font: { size: 9 } } }
+              }
+      }
     });
-    chartObjects.push(chart);
+
+    charts.push(chart);
   });
 
-  if (!specs.length) {
-    addChatMessage(
-      "System",
-      "AI returned no usable charts. Check the model output or prompt.",
-      "system"
-    );
+  if (!charts.length) {
+    setStatus("No charts were configured. Please choose X columns and try again.");
+  } else {
+    setStatus(`Rendered ${charts.length} chart(s).`);
   }
 }
 
-// ===== UI wiring =====
-function setupUI() {
-  document.getElementById("btn-connect").onclick = handleConnect;
-  document.getElementById("btn-load-workbooks").onclick = loadWorkbooks;
-  document.getElementById("btn-load-views").onclick = loadViews;
-  document.getElementById("btn-display-data").onclick = displayData;
-  document.getElementById("btn-ai-dashboard").onclick = generateAIDashboard;
+// Load data from selected worksheet
+async function loadWorksheetData() {
+  if (!dashboard || !worksheets.length) {
+    setStatus("Extension not fully initialized.");
+    return;
+  }
 
-  document.getElementById("btn-chat-send").onclick = () => {
-    const input = document.getElementById("chat-input");
-    const q = input.value;
-    input.value = "";
-    sendChat(q);
-  };
+  const select = document.getElementById("worksheet-select");
+  const worksheetName = select.value;
+  if (!worksheetName) {
+    setStatus("Please select a worksheet.");
+    return;
+  }
 
-  document.getElementById("chat-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const input = document.getElementById("chat-input");
-      const q = input.value;
-      input.value = "";
-      sendChat(q);
-    }
-  });
+  currentWorksheet = worksheets.find((w) => w.name === worksheetName);
+  if (!currentWorksheet) {
+    setStatus("Worksheet not found.");
+    return;
+  }
 
-  document.querySelectorAll(".preset").forEach((btn) => {
-    btn.onclick = () => {
-      const q = btn.getAttribute("data-q") || "";
-      sendChat(q);
+  try:
+    setStatus(`Loading data from "${worksheetName}"...`);
+
+    // getSummaryDataAsync is simple and works on most versions.
+    const options = {
+      maxRows: 5000,
+      ignoreSelection: true
     };
-  });
+
+    const summary = await currentWorksheet.getSummaryDataAsync(options);
+
+    const cols = summary.columns.map((c) => c.fieldName || c.caption);
+    const rows = summary.data.map((row) => {
+      const obj = {};
+      row.forEach((cell, idx) => {
+        // Use formattedValue for display
+        obj[cols[idx]] = cell.formattedValue;
+      });
+      return obj;
+    });
+
+    currentData.columns = cols;
+    currentData.rows = rows;
+
+    document.getElementById("data-info").textContent =
+      `Loaded ${rows.length} rows, ${cols.length} columns.`;
+
+    renderTable();
+    initChartConfig(cols);
+    setStatus("Data loaded successfully.");
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to load data from worksheet.");
+  }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  setupUI();
-  // Optional: initialize Tableau extension (won't change logic here)
-  if (window.tableau && tableau.extensions) {
-    tableau.extensions
-      .initializeAsync()
-      .then(() => setStatus("Extension initialized."))
-      .catch(() => setStatus("Extension initialized (fallback)."));
-  }
-});
+// Initialize extension and populate worksheet dropdown
+async function initExtension() {
+  try {
+    await tableau.extensions.initializeAsync();
+    dashboard = tableau.extensions.dashboardContent.dashboard;
+    worksheets = dashboard.worksheets;
 
+    const select = document.getElementById("worksheet-select");
+    select.innerHTML = "";
+    worksheets.forEach((ws) => {
+      const opt = document.createElement("option");
+      opt.value = ws.name;
+      opt.textContent = ws.name;
+      select.appendChild(opt);
+    });
+
+    setStatus(`Initialized. Found ${worksheets.length} worksheet(s).`);
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to initialize extension. Check console for details.");
+  }
+}
+
+// Wire events
+document.addEventListener("DOMContentLoaded", () => {
+  document
+    .getElementById("btn-load-data")
+    .addEventListener("click", loadWorksheetData);
+
+  document
+    .getElementById("btn-generate-dashboard")
+    .addEventListener("click", generateDashboard);
+
+  initExtension();
+});
